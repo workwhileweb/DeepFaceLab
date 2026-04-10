@@ -143,7 +143,9 @@ def gen_warp_params (w, flip=False, rotation_range=[-10,10], scale_range=[-0.5, 
     ################
     
     #random transform
-    random_transform_mat = cv2.getRotationMatrix2D((w // 2, w // 2), rotation, scale)
+    # OpenCV on some Windows builds rejects numpy scalar ints in center tuple.
+    center = (float(w) * 0.5, float(w) * 0.5)
+    random_transform_mat = cv2.getRotationMatrix2D(center, float(rotation), float(scale))
     random_transform_mat[:, 2] += (tx*w, ty*w)
 
     params = dict()

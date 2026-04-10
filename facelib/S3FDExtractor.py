@@ -168,6 +168,15 @@ class S3FDExtractor(object):
         if e is not None: e.__exit__(None,None,None)
 
         self.model.build_for_run ([ ( tf.float32, nn.get4Dshape (None,None,3) ) ])
+        # Fallback detector for cases where S3FD misses all faces.
+        self.fallback_haar = None
+        try:
+            haar_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+            fallback = cv2.CascadeClassifier(haar_path)
+            if fallback is not None and not fallback.empty():
+                self.fallback_haar = fallback
+        except Exception:
+            self.fallback_haar = None
 
     def __enter__(self):
         return self
@@ -196,10 +205,22 @@ class S3FDExtractor(object):
         for ltrb in self.refine (olist):
             l,t,r,b = [ x*input_scale for x in ltrb]
             bt = b-t
-            if min(r-l,bt) < 40: #filtering faces < 40pix by any side
+            if min(r-l,bt) < 10: # allow small faces for mobile portrait videos
                 continue
             b += bt*0.1 #enlarging bottom line a bit for 2DFAN-4, because default is not enough covering a chin
             detected_faces.append ( [int(x) for x in (l,t,r,b) ] )
+
+        # S3FD can fail on some compressed/mobile frames. Use Haar fallback.
+        if len(detected_faces) == 0 and self.fallback_haar is not None:
+            gray = cv2.cvtColor(input_image, cv2.COLOR_RGB2GRAY)
+            faces = self.fallback_haar.detectMultiScale(
+                gray,
+                scaleFactor=1.1,
+                minNeighbors=5,
+                minSize=(24, 24),
+            )
+            for (x, y, fw, fh) in faces:
+                detected_faces.append([int(x), int(y), int(x + fw), int(y + fh)])
 
         #sort by largest area first
         detected_faces = [ [(l,t,r,b), (r-l)*(b-t) ]  for (l,t,r,b) in detected_faces ]
@@ -242,7 +263,7 @@ class S3FDExtractor(object):
             bboxlist = np.zeros((1, 5))
 
         bboxlist = bboxlist[self.refine_nms(bboxlist, 0.3), :]
-        bboxlist = [ x[:-1].astype(np.int) for x in bboxlist if x[-1] >= 0.5]
+        bboxlist = [x[:-1].astype(int) for x in bboxlist if x[-1] >= 0.01]
         return bboxlist
 
     def refine_nms(self, dets, thresh):

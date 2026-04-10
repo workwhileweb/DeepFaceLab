@@ -162,7 +162,7 @@ class Devices(object):
             os.environ.pop('CUDA_VISIBLE_DEVICES')
         
         os.environ['TF_DIRECTML_KERNEL_CACHE_SIZE'] = '2500'
-        os.environ['CUDA_​CACHE_​MAXSIZE'] = '2147483647'
+        os.environ['CUDA_CACHE_MAXSIZE'] = '2147483647'
         os.environ['TF_MIN_GPU_MULTIPROCESSOR_COUNT'] = '2'
         os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' # tf log errors only
         

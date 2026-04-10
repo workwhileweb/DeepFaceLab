@@ -1,0 +1,17 @@
+hãy viết hướng dẫn .md các chạy phần mềm này để train model face từ 1 thư mục các hình ảnh hoặc từ 1 video
+
+
+
+
+🔗youtube.com : DeepFaceLab deepfake tutorial, using generic XSeg - YouTube - https://www.youtube.com/watch?v=kOIMXt8KK8M
+
+
+
+
+hãy tạo 1 gradio web ui trong đó người dùng upload 1 video hoặc 1 loạt hình ảnh lên, set các thông số cần thiết hoặc chọn preset (tự gen các preset), bấm train và show progress cùng logging chi tiết. kết quả tải về file trained face model .dfm
+
+
+có cách nào để tính toán thời gian hoặc số steps cần thiết để train tốt nhất và tự dừng lúc đó ko?
+
+
+bạn cần tự chạy server api và tự call api để test, video đầu vào là @1.MOV và @2.mp4 nằm ngay ./ của repo. các thông số bạn tự điều chỉnh sao cho phù hợp nhất, mọi quyền yêu cầu được cấp và không cần hỏi lại về quyền. tự chạy tự fix api kiểm tra cho đến khi có được file model trained dfm, ghi chú : các video đầu vào là video quay rõ mặt  

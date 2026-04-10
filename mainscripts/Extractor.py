@@ -171,6 +171,23 @@ class ExtractSubprocessor(Subprocessor):
                 rotated_image = image.swapaxes( 0,1 )[::-1,:,:]
 
             data.landmarks = landmarks_extractor.extract (rotated_image, data.rects, rects_extractor if (data.landmarks_accurate) else None, is_bgr=True)
+            # FAN can fail on low-quality/mobile frames. Fall back to a bbox-based
+            # 68-point template so extraction can still proceed.
+            for i, lmrks in enumerate(data.landmarks):
+                if lmrks is None and i < len(data.rects):
+                    l, t, r, b = data.rects[i]
+                    w = max(1.0, float(r - l))
+                    h = max(1.0, float(b - t))
+                    # Build a full 68-point normalized template from canonical 3D landmarks.
+                    tmpl3d = LandmarksProcessor.landmarks_68_3D[:, 0:2].astype(np.float32)
+                    min_xy = np.min(tmpl3d, axis=0)
+                    max_xy = np.max(tmpl3d, axis=0)
+                    span = np.maximum(max_xy - min_xy, 1e-6)
+                    tmpl = (tmpl3d - min_xy) / span
+                    approx = np.zeros((tmpl.shape[0], 2), dtype=np.float32)
+                    approx[:, 0] = float(l) + tmpl[:, 0] * w
+                    approx[:, 1] = float(t) + tmpl[:, 1] * h
+                    data.landmarks[i] = approx
             if data.rects_rotation != 0:
                 for i, (rect, lmrks) in enumerate(zip(data.rects, data.landmarks)):
                     new_rect, new_lmrks = rect, lmrks
@@ -234,7 +251,9 @@ class ExtractSubprocessor(Subprocessor):
                     rect_area      = mathlib.polygon_area(np.array(rect[[0,2,2,0]]).astype(np.float32), np.array(rect[[1,1,3,3]]).astype(np.float32))
                     landmarks_area = mathlib.polygon_area(landmarks_bbox[:,0].astype(np.float32), landmarks_bbox[:,1].astype(np.float32) )
 
-                    if not data.manual and face_type <= FaceType.FULL_NO_ALIGN and landmarks_area > 4*rect_area: #get rid of faces which umeyama-landmark-area > 4*detector-rect-area
+                    # Some mobile/portrait videos produce loose detector boxes.
+                    # Keep more candidates instead of discarding almost everything.
+                    if not data.manual and face_type <= FaceType.FULL_NO_ALIGN and landmarks_area > 25*rect_area:
                         continue
 
                     if output_debug_path is not None:

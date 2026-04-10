@@ -1,0 +1,23 @@
+xem thêm ở đây : @HUONG_DAN_TRAIN_FACE.md
+
+tạo api.py swagger support api endpoints server
+chạy docker
+sẽ deploy lên gpu huggingface
+toàn bộ các api sẽ làm việc theo jobId, tức là post info lên sẽ trả về jobId để truy xuất log, file, result ...
+
+
+-start_job : tạo 1 guid folder workspace mới là jobId luôn
+truyền tham số vào là src_video / dst_video static url to download
+hoặc src_images[], dst_images[] là static url images to download
+tự tải về vào thư mục workspace
+
+-split frames : truyền vào jobId
+tạo task python chạy riêng
+get status và result = split frames get log api
+sử dụng ffmpeg để cắt video thành các frames (nếu không có file video thì báo không có)
+
+-extract faces
+sử dụng 
+
+-download : sử dụng jobId (workspace name folder) để nén, và tải về compressed workspace
+-delete : xóa workspace

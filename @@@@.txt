@@ -1,0 +1,61 @@
+tạo 1 file colab để thực hiện các bước @HUONG_DAN_TRAIN_FACE.md
+
+
+tạo 1 autotrain.py và autotrain.cmd để : 
+không call process (ví dụ python main.py extract ...)
+mà refer code trong repo rồi tự call vào các hàm python trong @main
+
+-upload video/ select chọn 2 file video dst và src
+-tách frames
+-tách mặt và align (dùng model s3fd hoặc yolov5)
+-lọc faceset, sắp xếp ảnh theo độ mờ rõ và xóa bớt hình bằng thuật toán
+dùng quét tỉ lệ % phát hiện mặt trên ảnh đã tách và xóa bớt, kể cả xem tông màu ...
+hoặc là dùng thuật toán đường biên sao đó
+tự lọc xóa bớt hình có mặt mờ
+-tự động làm rõ mặt đã tách bằng thuật toán xseg, xem XSegEditor\XSegEditor.py
+tự động quét qua và làm rõ mặt toàn bộ hình, lưu lại thông tin
+-train = Model_SAEHD,
+tự tìm các thông số thích hợp,
+tạo thành các tập preset để chọn
+không cần thao tác, tự lưu tự backup và tự save
+phải auto backup liên tục vì khi train lâu có thể treo máy làm mất dữ liệu
+tự thoát và hoàn thành qua bước tiếp theo khi train quá lâu hoặc lâu train không giảm ngưỡng
+-join trained qua dfm file
+-cho tải file dfm trainned về
+-mọi tiến trình show full log đầy đủ
+
+ghi chú : hãy chuyển qua chế độ plan mode để thực hiện lâu dài
+mọi quyền được cấp không hỏi lại khi thực hiện
+có thắc mắc gì thì hỏi rõ trước khi thực hiện
+tự thêm log và code tool check log theo dõi để tự chạy tự debug đến khi hoàn thành
+2 video đầu vào src là @1.MOV, dst là @2.mp4
+cần xuất được *.dfm model đã trained tốt nhất
+
+trong trường hợp cần so sánh, thư mục đã extract frame và faces từ (src là @1.MOV, dst là @2.mp4)
+nằm ở @.data_test
+tuy nhiên chỉ nên dùng để so sánh kết quả khi tự chạy
+
+
+
+
+
+
+
+1.MOV và 2.mp4 đang nằm ở đường dẫn nào chính xác? (mặc định mình sẽ tìm ở root repo) : root, “upload/select 2 video”: bạn muốn dạng: multi video args theo thứ tự, model xseg : @E:\app\DeepFaceLab\DeepFaceLab_NVIDIA_RTX3000_series\_internal\model_generic_xseg, bạn toàn quyền refer qua, metric dùng loss trung bình cửa sổ bao nhiêu iter? bạn tự chọn theo thông số thông dụng, đặt ở env nếu cần. hoặc stop nếu quá x hours = 1 hoặc env. backup “liên tục”: 10 phút hoặc env. “best .dfm”: chọn theo tiêu chí nào : env, mặc định là loss thấp nhất
+
+huggingface space can open port?
+
+
+@autotrain.py
+không thể chạy train trên máy tôi được vì máy quá yếu dẫn tới liên tục treo máy
+hãy exposed autotrain.py ra các export func để dùng chung khi chạy local
+với 1 file runonhugging.py
+file mới này dùng chung code với autotrain local nhưng sửa thêm cho phù hợp
+sẽ chạy ở docker gpu cuda huggingface
+thiết kế theo hướng mở api để chạy trên hugging dạng dịch vụ train,
+người dùng call curl để upload files và lấy jobId để get status log và result, download model
+... hãy tự thiết kế lại code, create new space in hugging với gpu support, upload docker file
+tự chạy ở dưới client để check lỗi và train thực với thông số như đã cung cấp ở trên
+cho đến khi hoàn thành
+hãy tạo plan mode để làm việc, không hỏi lại khi đã bắt đầu
+nếu chưa hiểu hãy hỏi lại cụ thể trước khi bắt đầu
