@@ -1,6 +1,7 @@
 import json
+import os
+import subprocess
 import threading
-import traceback
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -10,11 +11,23 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 
-from autotrain import run_pipeline
-
+# Hugging Face sets OMP_NUM_THREADS from CPU limits (e.g. "3500m"), while
+# numexpr expects a plain integer. Normalize before importing DeepFaceLab stack.
+_omp_raw = os.environ.get("OMP_NUM_THREADS", "")
+if _omp_raw and not _omp_raw.isdigit():
+    os.environ["OMP_NUM_THREADS"] = "1"
 
 APP_ROOT = Path(__file__).resolve().parent
-SERVICE_ROOT = APP_ROOT / "hf_service"
+# Use explicit override first. For HF bucket-mounted /app, /tmp is often
+# more stable for heavy write workloads during training.
+_data_root_env = os.environ.get("DFL_DATA_ROOT", "").strip()
+if _data_root_env:
+    DATA_ROOT = Path(_data_root_env)
+elif Path("/data").exists():
+    DATA_ROOT = Path("/data")
+else:
+    DATA_ROOT = APP_ROOT
+SERVICE_ROOT = DATA_ROOT / "hf_service"
 JOBS_DIR = SERVICE_ROOT / "jobs"
 JOBS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -50,49 +63,56 @@ def _read_status(job_dir: Path) -> dict:
     return json.loads(p.read_text(encoding="utf-8"))
 
 
+@app.on_event("startup")
+def _recover_interrupted_jobs() -> None:
+    # If app restarts, background threads are gone. Mark running jobs accordingly.
+    for job_dir in JOBS_DIR.glob("*"):
+        if not job_dir.is_dir():
+            continue
+        status_file = _status_path(job_dir)
+        if not status_file.exists():
+            continue
+        try:
+            st = _read_status(job_dir)
+        except Exception:
+            continue
+        if st.get("status") in {"queued", "running"}:
+            st["status"] = "failed"
+            st["updated_at"] = _now()
+            st["message"] = "Service restarted before job completion. Please resubmit."
+            _write_status(job_dir, st)
+
+
 def _run_job(job_id: str, src_path: Path, dst_path: Path, preset: str, max_hours: float, plateau_hours: float) -> None:
     job_dir = JOBS_DIR / job_id
-    try:
-        st = _read_status(job_dir)
-        st["status"] = "running"
-        st["updated_at"] = _now()
-        st["message"] = "Pipeline started"
-        _write_status(job_dir, st)
-
-        env_overrides = {
-            "AUTOTRAIN_WORKDIR": str(job_dir / "runs"),
-            "AUTOTRAIN_MAX_HOURS": str(max_hours),
-            "AUTOTRAIN_PLATEAU_HOURS": str(plateau_hours),
-            "AUTOTRAIN_BACKUP_MIN": "10",
-            "AUTOTRAIN_SAVE_MIN": "10",
-            "AUTOTRAIN_ENABLE_XSEG": "1",
-            "AUTOTRAIN_ENABLE_ENHANCE": "1",
-        }
-        result = run_pipeline([str(src_path), str(dst_path)], preset=preset, env_overrides=env_overrides)
-
-        run_dir = Path(result["run_dir"])
-        summary_file = run_dir / "summary.json"
-        summary = json.loads(summary_file.read_text(encoding="utf-8")) if summary_file.exists() else {}
-        result_dfm = summary.get("dfm_output")
-
-        st["status"] = "completed"
-        st["updated_at"] = _now()
-        st["message"] = "Completed"
-        st["run_dir"] = str(run_dir)
-        st["result_dfm"] = result_dfm
-        _write_status(job_dir, st)
-    except Exception as e:
-        st = _read_status(job_dir)
-        st["status"] = "failed"
-        st["updated_at"] = _now()
-        st["message"] = f"{type(e).__name__}: {e}"
-        (job_dir / "error.log").write_text(traceback.format_exc(), encoding="utf-8")
-        _write_status(job_dir, st)
+    cmd = [
+        "python3",
+        "runonhugging_worker.py",
+        "--job-dir",
+        str(job_dir),
+        "--src",
+        str(src_path),
+        "--dst",
+        str(dst_path),
+        "--preset",
+        preset,
+        "--max-hours",
+        str(max_hours),
+        "--plateau-hours",
+        str(plateau_hours),
+    ]
+    proc = subprocess.Popen(cmd, cwd=str(APP_ROOT))
+    st = _read_status(job_dir)
+    st["status"] = "running"
+    st["updated_at"] = _now()
+    st["message"] = "Pipeline started"
+    st["worker_pid"] = proc.pid
+    _write_status(job_dir, st)
 
 
 @app.get("/healthz")
 def healthz():
-    return {"ok": True}
+    return {"ok": True, "data_root": str(DATA_ROOT), "jobs_dir": str(JOBS_DIR)}
 
 
 @app.post("/jobs", response_model=JobStatus)
@@ -141,7 +161,17 @@ def get_job(job_id: str):
     job_dir = JOBS_DIR / job_id
     if not job_dir.exists():
         raise HTTPException(status_code=404, detail="job not found")
-    return JobStatus(**_read_status(job_dir))
+    st = _read_status(job_dir)
+    pid = st.get("worker_pid")
+    if st.get("status") == "running" and isinstance(pid, int):
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            st["status"] = "failed"
+            st["updated_at"] = _now()
+            st["message"] = "Worker process exited unexpectedly."
+            _write_status(job_dir, st)
+    return JobStatus(**st)
 
 
 @app.get("/jobs/{job_id}/logs")
@@ -152,12 +182,17 @@ def get_job_logs(job_id: str, tail_lines: int = 200):
 
     st = _read_status(job_dir)
     run_dir = st.get("run_dir")
-    if not run_dir:
+    log_file = Path(run_dir) / "autotrain.log" if run_dir else None
+    if (log_file is None) or (not log_file.exists()):
+        runs_dir = job_dir / "runs"
+        if runs_dir.exists():
+            candidates = sorted([p for p in runs_dir.iterdir() if p.is_dir()], key=lambda p: p.stat().st_mtime, reverse=True)
+            if candidates:
+                candidate_log = candidates[0] / "autotrain.log"
+                if candidate_log.exists():
+                    log_file = candidate_log
+    if log_file is None or not log_file.exists():
         return PlainTextResponse("Run has not started yet.")
-
-    log_file = Path(run_dir) / "autotrain.log"
-    if not log_file.exists():
-        return PlainTextResponse("No log yet.")
 
     lines = log_file.read_text(encoding="utf-8", errors="ignore").splitlines()
     return PlainTextResponse("\n".join(lines[-max(1, tail_lines) :]))
