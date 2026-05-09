@@ -186,6 +186,12 @@ class S3FDExtractor(object):
 
     def extract (self, input_image, is_bgr=True, is_remove_intersects=False):
 
+        if input_image.dtype != np.uint8:
+            if np.issubdtype(input_image.dtype, np.floating):
+                input_image = np.clip(input_image, 0.0, 255.0).astype(np.uint8)
+            else:
+                input_image = np.clip(input_image.astype(np.float32), 0.0, 255.0).astype(np.uint8)
+
         if is_bgr:
             input_image = input_image[:,:,::-1]
             is_bgr = False

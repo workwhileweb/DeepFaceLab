@@ -158,8 +158,11 @@ class Devices(object):
         if int(os.environ.get("NN_DEVICES_INITIALIZED", 0)) != 0:
             return
             
-        if 'CUDA_VISIBLE_DEVICES' in os.environ.keys():
-            os.environ.pop('CUDA_VISIBLE_DEVICES')
+        # Hugging Face / K8s often sets CUDA_VISIBLE_DEVICES for correct GPU mapping.
+        # Popping it can break device visibility or TF placement in containers.
+        if os.environ.get("NN_KEEP_CUDA_VISIBLE_DEVICES", "").lower() not in ("1", "true", "yes"):
+            if "CUDA_VISIBLE_DEVICES" in os.environ:
+                os.environ.pop("CUDA_VISIBLE_DEVICES")
         
         os.environ['TF_DIRECTML_KERNEL_CACHE_SIZE'] = '2500'
         os.environ['CUDA_CACHE_MAXSIZE'] = '2147483647'

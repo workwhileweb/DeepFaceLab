@@ -1,0 +1,19 @@
+# Hugging Face Docker Space: headless API + DeepFaceLab train stack (Linux, Python 3.10+)
+#
+# TensorFlow 2.12.x pins typing-extensions<4.6 while current FastAPI needs >=4.8 — use TF 2.15+.
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+pydantic==2.10.4
+python-multipart>=0.0.9
+
+tqdm
+numpy>=1.23,<2
+numexpr
+h5py>=3.8
+opencv-python>=4.8
+ffmpeg-python>=0.2
+scikit-image>=0.21
+scipy>=1.10
+colorama
+tensorflow==2.15.1
+tf2onnx==1.16.1

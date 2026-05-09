@@ -110,6 +110,7 @@ class nn():
                 config = tf.ConfigProto()
                 config.gpu_options.visible_device_list = ','.join([str(device.index) for device in device_config.devices])
                 
+            config.allow_soft_placement = True
             config.gpu_options.force_gpu_compatible = True
             config.gpu_options.allow_growth = True
             nn.tf_sess_config = config

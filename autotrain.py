@@ -1,6 +1,7 @@
 import argparse
 import contextlib
 import csv
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import shutil
@@ -73,6 +74,13 @@ class AutoTrainConfig:
     preset: str
     enable_xseg: bool
     enable_faceset_enhance: bool
+    preprocess_parallel: bool
+    parallel_align: bool
+    parallel_enhance: bool
+    train_batch_size: int
+    min_iterations: int
+    min_src_faces: int
+    min_dst_faces: int
 
 
 class TeeLogger:
@@ -110,8 +118,13 @@ def _auto_input_str(prompt="", default_value="", *args, **kwargs):
 
 
 def _auto_input_int(prompt="", default_value=0, *args, **kwargs):
-    _auto_log(f"[auto-input-int] {prompt} -> {default_value}")
-    return default_value
+    value = default_value
+    p = str(prompt).lower()
+    # Allow forcing bigger batches to better utilize stronger GPUs.
+    if "batch_size" in p:
+        value = max(1, env_int("AUTOTRAIN_BATCH_SIZE", int(default_value) if default_value else 8))
+    _auto_log(f"[auto-input-int] {prompt} -> {value}")
+    return value
 
 
 def _auto_input_number(prompt="", default_value=0.0, *args, **kwargs):
@@ -265,6 +278,11 @@ def run_extract(video: Path, frames_dir: Path, cfg: AutoTrainConfig, logger: Tee
 
 
 def run_align(frames_dir: Path, aligned_dir: Path, cfg: AutoTrainConfig, logger: TeeLogger) -> None:
+    s3fd_path = Path(__file__).resolve().parent / "facelib" / "S3FD.npy"
+    if s3fd_path.exists():
+        logger.log(f"[extract-faces] S3FD weights path={s3fd_path} size_bytes={s3fd_path.stat().st_size}")
+    else:
+        logger.log(f"[extract-faces] WARNING: S3FD.npy missing at {s3fd_path}")
     logger.log(f"[extract-faces] {frames_dir.name} -> {aligned_dir}")
     Extractor.main(
         detector=cfg.detector,
@@ -334,7 +352,7 @@ def train_model(cfg: AutoTrainConfig, model_dir: Path, src_aligned: Path, dst_al
     best_loss = float("inf")
     best_iter = 0
     best_time = start
-    report = {"stopped_reason": "", "best_loss": None, "best_iter": 0, "iters_done": 0}
+    report = {"stopped_reason": "", "best_loss": None, "best_iter": 0, "iters_done": 0, "quality_gate": {}}
 
     try:
         while True:
@@ -370,10 +388,10 @@ def train_model(cfg: AutoTrainConfig, model_dir: Path, src_aligned: Path, dst_al
 
             elapsed_h = (now - start) / 3600.0
             no_improve_h = (now - best_time) / 3600.0
-            if elapsed_h >= cfg.train_max_hours:
+            if elapsed_h >= cfg.train_max_hours and current_iter >= cfg.min_iterations:
                 report["stopped_reason"] = f"max_hours_reached({cfg.train_max_hours})"
                 break
-            if no_improve_h >= cfg.plateau_hours:
+            if no_improve_h >= cfg.plateau_hours and current_iter >= cfg.min_iterations:
                 report["stopped_reason"] = f"plateau_hours_reached({cfg.plateau_hours})"
                 break
     finally:
@@ -385,6 +403,38 @@ def train_model(cfg: AutoTrainConfig, model_dir: Path, src_aligned: Path, dst_al
     report["best_iter"] = best_iter
     report["iters_done"] = model.get_iter()
     return report
+
+
+def write_quality_reports(run_dir: Path, src_report: Dict, dst_report: Dict, train_report: Dict, logger: TeeLogger) -> Dict:
+    quality = {
+        "min_src_faces_required": int(os.environ.get("AUTOTRAIN_MIN_SRC_FACES", "300")),
+        "min_dst_faces_required": int(os.environ.get("AUTOTRAIN_MIN_DST_FACES", "300")),
+        "min_iterations_required": int(os.environ.get("AUTOTRAIN_MIN_ITERS", "2000")),
+        "src_faces_kept": int(src_report.get("kept", 0)),
+        "dst_faces_kept": int(dst_report.get("kept", 0)),
+        "iterations_done": int(train_report.get("iters_done", 0)),
+        "best_loss": train_report.get("best_loss"),
+        "checks": {},
+    }
+    quality["checks"]["src_faces_ok"] = quality["src_faces_kept"] >= quality["min_src_faces_required"]
+    quality["checks"]["dst_faces_ok"] = quality["dst_faces_kept"] >= quality["min_dst_faces_required"]
+    quality["checks"]["iterations_ok"] = quality["iterations_done"] >= quality["min_iterations_required"]
+    quality["checks"]["ready_for_export"] = all(quality["checks"].values())
+    reports_dir = run_dir / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    logger.dump_json(reports_dir / "quality_report.json", quality)
+
+    md = [
+        "# Quality Report",
+        "",
+        f"- src_faces_kept: `{quality['src_faces_kept']}` / required `{quality['min_src_faces_required']}`",
+        f"- dst_faces_kept: `{quality['dst_faces_kept']}` / required `{quality['min_dst_faces_required']}`",
+        f"- iterations_done: `{quality['iterations_done']}` / required `{quality['min_iterations_required']}`",
+        f"- best_loss: `{quality['best_loss']}`",
+        f"- ready_for_export: `{quality['checks']['ready_for_export']}`",
+    ]
+    (reports_dir / "quality_report.md").write_text("\n".join(md) + "\n", encoding="utf-8")
+    return quality
 
 
 def export_dfm(cfg: AutoTrainConfig, model_dir: Path, output_dir: Path, logger: TeeLogger) -> Path:
@@ -446,6 +496,13 @@ def build_config(args: argparse.Namespace) -> AutoTrainConfig:
         preset=args.preset,
         enable_xseg=env_int("AUTOTRAIN_ENABLE_XSEG", 1) == 1,
         enable_faceset_enhance=env_int("AUTOTRAIN_ENABLE_ENHANCE", 1) == 1,
+        preprocess_parallel=env_int("AUTOTRAIN_PREPROCESS_PARALLEL", 1) == 1,
+        parallel_align=env_int("AUTOTRAIN_PARALLEL_ALIGN", 0) == 1,
+        parallel_enhance=env_int("AUTOTRAIN_PARALLEL_ENHANCE", 0) == 1,
+        train_batch_size=max(1, env_int("AUTOTRAIN_BATCH_SIZE", 8)),
+        min_iterations=max(100, env_int("AUTOTRAIN_MIN_ITERS", 2000)),
+        min_src_faces=max(10, env_int("AUTOTRAIN_MIN_SRC_FACES", 300)),
+        min_dst_faces=max(10, env_int("AUTOTRAIN_MIN_DST_FACES", 300)),
     )
 
 
@@ -491,17 +548,51 @@ def run_with_config(cfg: AutoTrainConfig) -> Dict:
     nn.initialize_main_env()
 
     try:
-        run_extract(cfg.src_video, src_frames, cfg, logger)
-        run_extract(cfg.dst_video, dst_frames, cfg, logger)
-        run_align(src_frames, src_aligned, cfg, logger)
-        run_align(dst_frames, dst_aligned, cfg, logger)
+        if cfg.preprocess_parallel:
+            with ThreadPoolExecutor(max_workers=2) as ex:
+                futures = [
+                    ex.submit(run_extract, cfg.src_video, src_frames, cfg, logger),
+                    ex.submit(run_extract, cfg.dst_video, dst_frames, cfg, logger),
+                ]
+                for fut in futures:
+                    fut.result()
+        else:
+            run_extract(cfg.src_video, src_frames, cfg, logger)
+            run_extract(cfg.dst_video, dst_frames, cfg, logger)
+
+        if cfg.parallel_align:
+            with ThreadPoolExecutor(max_workers=2) as ex:
+                futures = [
+                    ex.submit(run_align, src_frames, src_aligned, cfg, logger),
+                    ex.submit(run_align, dst_frames, dst_aligned, cfg, logger),
+                ]
+                for fut in futures:
+                    fut.result()
+        else:
+            run_align(src_frames, src_aligned, cfg, logger)
+            run_align(dst_frames, dst_aligned, cfg, logger)
 
         src_report = filter_faceset(src_aligned, cfg, logger, report_dir / "src_filter_report.json")
         dst_report = filter_faceset(dst_aligned, cfg, logger, report_dir / "dst_filter_report.json")
         logger.log(f"[filter-summary] src={src_report} dst={dst_report}")
+        if src_report.get("kept", 0) < cfg.min_src_faces or dst_report.get("kept", 0) < cfg.min_dst_faces:
+            raise RuntimeError(
+                f"Not enough aligned faces after filtering. "
+                f"src={src_report.get('kept', 0)} (min={cfg.min_src_faces}), "
+                f"dst={dst_report.get('kept', 0)} (min={cfg.min_dst_faces})"
+            )
 
-        run_faceset_enhance(src_aligned, cfg, logger)
-        run_faceset_enhance(dst_aligned, cfg, logger)
+        if cfg.parallel_enhance:
+            with ThreadPoolExecutor(max_workers=2) as ex:
+                futures = [
+                    ex.submit(run_faceset_enhance, src_aligned, cfg, logger),
+                    ex.submit(run_faceset_enhance, dst_aligned, cfg, logger),
+                ]
+                for fut in futures:
+                    fut.result()
+        else:
+            run_faceset_enhance(src_aligned, cfg, logger)
+            run_faceset_enhance(dst_aligned, cfg, logger)
 
         run_xseg(src_aligned, cfg, logger)
         run_xseg(dst_aligned, cfg, logger)
@@ -509,6 +600,9 @@ def run_with_config(cfg: AutoTrainConfig) -> Dict:
         train_report = train_model(cfg, model_dir, src_aligned, dst_aligned, logger)
         logger.dump_json(report_dir / "train_report.json", train_report)
         logger.log(f"[train-report] {train_report}")
+        quality = write_quality_reports(run_dir, src_report, dst_report, train_report, logger)
+        if not quality["checks"]["ready_for_export"]:
+            raise RuntimeError(f"Quality gate failed: {quality}")
 
         dfm_path = export_dfm(cfg, model_dir, out_dir, logger)
         summary = {
@@ -517,8 +611,28 @@ def run_with_config(cfg: AutoTrainConfig) -> Dict:
             "log_file": str(run_dir / "autotrain.log"),
             "reports": str(report_dir),
             "model_dir": str(model_dir),
+            "quality_report": str(report_dir / "quality_report.json"),
         }
         logger.dump_json(run_dir / "summary.json", summary)
+        logger.dump_json(run_dir / "metrics.json", {"train_report": train_report, "quality": quality})
+        summary_md = [
+            "# Run Summary",
+            "",
+            f"- run_dir: `{run_dir}`",
+            f"- dfm_output: `{dfm_path}`",
+            f"- iterations_done: `{train_report.get('iters_done')}`",
+            f"- best_loss: `{train_report.get('best_loss')}`",
+            f"- ready_for_export: `{quality['checks']['ready_for_export']}`",
+        ]
+        (run_dir / "summary.md").write_text("\n".join(summary_md) + "\n", encoding="utf-8")
+        timeline = [
+            "# Job Timeline",
+            "",
+            f"- `{datetime.now().isoformat()}Z` Extract/align/filter completed",
+            f"- `{datetime.now().isoformat()}Z` Training completed at iter `{train_report.get('iters_done')}`",
+            f"- `{datetime.now().isoformat()}Z` Quality gate passed and DFM exported: `{dfm_path.name}`",
+        ]
+        (run_dir / "timeline.md").write_text("\n".join(timeline) + "\n", encoding="utf-8")
         logger.log(f"[done] summary={summary}")
         logger.log("=== AUTOTRAIN END (SUCCESS) ===")
         return {"ok": True, "run_dir": str(run_dir), "summary": summary}

@@ -1,0 +1,50 @@
+hướng kế tiếp :
+chạy local từ app đã build theo các step đã làm
+gom lại thành 1 step chuẩn
+coi lại video
+
+
+chỉ đưa khâu train lên gpu
+gồm các files đã aligned và làm sáng
+
+
+https://huggingface.co/spaces/cristiefisherwfc43821s/deepfacelab-autotrain-api/settings
+https://huggingface.co/settings/repositories/storage
+huggingface Storage Buckets view files
+https://huggingface.co/docs/hub/storage-buckets-access
+https://huggingface.co/docs/hub/spaces-storage
+
+
+build hoàn thành không lỗi, app started,
+bạn hãy tự connect vào space và tiếp tục công việc cho đến khi
+hoàn thành mục tiêu là train được model dfm
+
+
+
+
+
+runtime error
+Exit code: 143. Reason: 
+==========
+== CUDA ==
+==========
+
+CUDA Version 12.1.1
+
+Container image Copyright (c) 2016-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+This container image and its contents are governed by the NVIDIA Deep Learning Container License.
+By pulling and using the container, you accept the terms and conditions of this license:
+https://developer.nvidia.com/ngc/nvidia-deep-learning-container-license
+
+A copy of this license is made available in this container at /NGC-DL-CONTAINER-LICENSE for your convenience.
+
+INFO:     Started server process [71]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:7860 (Press CTRL+C to quit)
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [71]
+Terminated

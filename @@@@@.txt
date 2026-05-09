@@ -1,0 +1,44 @@
+hãy chuyển qua chế độ plan mode để thực hiện lâu dài
+mọi quyền được cấp không hỏi lại khi thực hiện
+có thắc mắc gì thì hỏi rõ trước khi thực hiện
+tự thêm log và code tool check log theo dõi để tự chạy
+2 video đầu vào src là @1.MOV, dst là @2.mp4
+cần xuất được *.dfm model đã trained tốt nhất
+các kết quả nên lưu lại thành file .md tương ứng để dễ nắm bắt lại sau này
+
+
+tự dùng huggingface mcp để kết nối và cài đặt trên space theo yêu cầu
+tự deploy / upload, chạy và sửa lỗi cho đến khi hoàn thành mục tiêu sau :
+
+
+mục tiêu là build code để đưa lên trên huggingface chạy được
+tận dụng gpu của huggingface chứ ở máy local chạy không nổi
+
+-đưa vào đầu vào là 1 video chứa khuôn mặt cần train
+-tự động thực hiện tất cả các thao tác cần thiết lọc tách bộ mặt
+-và train ra file model dfm cuối cùng có thể tải về
+-cần phải tự động thực hiện tất cả các bước mà không có can thiệp của con người
+vì chạy remote trên hugging và thời gian train khá lâu không thể đợi được
+
+-ở lần chạy trước trên huggingface (code trước), đã có thể build được model dfm nhưng
+kết quả file dfm chỉ có kích thước ~300mb, so với cùng 1 file model train từ
+cùng 1 video chạy bằng console có kích thước ~600mb
+và trong khi model 600mb apply vào thì swap face rất tốt thì model ~300mb
+lại chỉ cho ra kết quả video swap face với khuôn mặt trắng (blank)
+-hãy xem lại code của quá trình train trên hugging face đó và xem thử lỗi ở đâu và tại sao?
+
+-hãy đọc kỹ repo và giải thích chi tiết về nguyên lý hoạt động của quá trình train
+file dfm là gì? sử dụng để làm gì? sử dụng như thế nào?
+flow của repo này khi train ra file dfm là gì?
+
+-nêu rõ các vấn đề có thể và hướng khắc phục khi auto train
+
+-có thể build code để up lên huggingface để train tự động như mục tiêu không
+các model và file cần thiết cho quá trình chạy phải được upload sẵn vào public huggingface space drive
+và được map vào thư mục /data của hugging space
+để không phải tải lại và không làm mất dữ liệu khi chạy lại hoặc upload new code
+các kết quả phân tích video, snapshot, ... tất cả dữ liệu phát sinh phải được lưu vào ./data
+mỗi 1 job khi upload lên sẽ có 1 folder riêng
+code khi khởi chạy phải quét tất cả các thư mục chưa hoàn thành và tiến hành chạy tiếp tục
+cung cấp api để theo dõi các jobs và status và tải model và upload new job
+khi hoàn thành tất cả folder job phải thoát để đưa space về trạng thái sleep

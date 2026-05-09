@@ -59,3 +59,7 @@ tự chạy ở dưới client để check lỗi và train thực với thông s
 cho đến khi hoàn thành
 hãy tạo plan mode để làm việc, không hỏi lại khi đã bắt đầu
 nếu chưa hiểu hãy hỏi lại cụ thể trước khi bắt đầu
+
+
+
+>>>cần có client run có setting sẵn cmd có time và log và phần trăm
